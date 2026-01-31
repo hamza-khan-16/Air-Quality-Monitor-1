@@ -1,11 +1,19 @@
 import { useLiveSimulation } from "@/hooks/use-simulation";
+import { useFirebaseAqi } from "@/hooks/use-firebase-aqi";
+import { useDeviceLocation } from "@/hooks/use-location";
 import { getAqiStatus } from "@/hooks/use-aqi";
 import { formatDistanceToNow } from "date-fns";
-import { Wind, MapPin, Loader2, Info } from "lucide-react";
+import { Wind, MapPin, Loader2, Info, Wifi, WifiOff } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export default function LiveMonitor() {
-  const reading = useLiveSimulation();
+  const location = useDeviceLocation();
+  const firebaseData = useFirebaseAqi();
+  const simulatedReading = useLiveSimulation();
+
+  const reading = firebaseData.isConnected && firebaseData.currentReading 
+    ? firebaseData.currentReading 
+    : simulatedReading;
 
   if (!reading) {
     return (
@@ -16,15 +24,44 @@ export default function LiveMonitor() {
   }
 
   const status = getAqiStatus(reading.value);
+  const locationText = location.loading 
+    ? "Detecting location..." 
+    : location.city 
+      ? `${location.city}${location.country ? `, ${location.country}` : ""}` 
+      : "Your Location";
 
   return (
     <div className={`min-h-screen transition-bg-smooth duration-700 ${status.lightBg} pb-24 md:pt-24`}>
       <div className="max-w-md mx-auto px-6 py-8 md:max-w-2xl">
         
+        {/* Connection Status */}
+        <div className="flex items-center justify-center gap-2 mb-4">
+          {firebaseData.isConnected ? (
+            <div className="flex items-center gap-1.5 text-green-600 bg-green-100 px-3 py-1 rounded-full text-xs font-medium">
+              <Wifi size={12} />
+              <span>Firebase Connected</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-amber-600 bg-amber-100 px-3 py-1 rounded-full text-xs font-medium">
+              <WifiOff size={12} />
+              <span>Simulation Mode</span>
+            </div>
+          )}
+        </div>
+
         {/* Header Location */}
         <div className="flex items-center justify-center gap-2 mb-8 opacity-80">
           <MapPin size={18} className="text-slate-600" />
-          <span className="font-medium text-slate-700 tracking-wide uppercase text-sm">San Francisco, CA</span>
+          {location.loading ? (
+            <span className="font-medium text-slate-500 tracking-wide text-sm flex items-center gap-2">
+              <Loader2 size={14} className="animate-spin" />
+              Detecting location...
+            </span>
+          ) : (
+            <span className="font-medium text-slate-700 tracking-wide uppercase text-sm" data-testid="text-location">
+              {locationText}
+            </span>
+          )}
         </div>
 
         {/* Main Indicator */}
@@ -62,6 +99,7 @@ export default function LiveMonitor() {
                 animate={{ y: 0, opacity: 1 }}
                 exit={{ y: -20, opacity: 0 }}
                 className={`text-[8rem] font-display font-bold leading-none tracking-tighter ${status.color}`}
+                data-testid="text-aqi-value"
               >
                 {reading.value}
               </motion.h1>
@@ -72,6 +110,7 @@ export default function LiveMonitor() {
               animate={{ opacity: 1 }}
               key={status.label}
               className={`inline-block px-4 py-1.5 rounded-full mt-4 text-sm font-bold tracking-wide uppercase ${status.bg} text-white shadow-lg`}
+              data-testid="text-aqi-status"
             >
               {status.label}
             </motion.div>
@@ -79,7 +118,7 @@ export default function LiveMonitor() {
         </div>
 
         {/* Update Time */}
-        <p className="text-center text-slate-500 text-sm mt-8 font-medium">
+        <p className="text-center text-slate-500 text-sm mt-8 font-medium" data-testid="text-last-updated">
           Updated {formatDistanceToNow(new Date(reading.timestamp), { addSuffix: true })}
         </p>
 

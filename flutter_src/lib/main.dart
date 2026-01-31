@@ -4,17 +4,21 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:intl/intl.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 
 // --- MAIN ENTRY POINT ---
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize Firebase (Assuming default options are generated)
-  // Ensure you have generated firebase_options.dart using `flutterfire configure`
+  
+  // Initialize Firebase
+  // IMPORTANT: Run `flutterfire configure` to generate firebase_options.dart
   try {
     await Firebase.initializeApp();
   } catch (e) {
-    print("Firebase init error (ignore if running without config): $e");
+    print("Firebase init error: $e");
   }
+  
   runApp(const AqiApp());
 }
 
@@ -51,18 +55,28 @@ class AqiReading {
     );
   }
 
+  // Returns color based on AQI value
   Color get statusColor {
-    if (value <= 50) return Colors.greenAccent.shade400;
-    if (value <= 100) return Colors.yellowAccent.shade700;
-    if (value <= 200) return Colors.orangeAccent.shade400;
-    return Colors.redAccent.shade400;
+    if (value <= 50) return const Color(0xFF4ADE80); // Green
+    if (value <= 100) return const Color(0xFFFACC15); // Yellow
+    if (value <= 200) return const Color(0xFFFB923C); // Orange
+    return const Color(0xFFEF4444); // Red
   }
 
+  // Returns status text based on AQI value
   String get statusText {
     if (value <= 50) return "Good";
     if (value <= 100) return "Moderate";
     if (value <= 200) return "Unhealthy";
     return "Hazardous";
+  }
+  
+  // Returns health recommendation based on AQI value
+  String get healthTip {
+    if (value <= 50) return "Air quality is great! Perfect time for outdoor activities.";
+    if (value <= 100) return "Air quality is acceptable. Sensitive individuals should limit prolonged outdoor exertion.";
+    if (value <= 200) return "Everyone may begin to experience health effects. Limit outdoor time.";
+    return "Emergency conditions. Avoid all outdoor physical activity.";
   }
 }
 
@@ -105,8 +119,73 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 // --- SCREEN 1: LIVE MONITOR ---
-class LiveMonitorScreen extends StatelessWidget {
+class LiveMonitorScreen extends StatefulWidget {
   const LiveMonitorScreen({super.key});
+
+  @override
+  State<LiveMonitorScreen> createState() => _LiveMonitorScreenState();
+}
+
+class _LiveMonitorScreenState extends State<LiveMonitorScreen> {
+  String _locationText = "Detecting location...";
+  bool _isLoadingLocation = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _getLocation();
+  }
+
+  Future<void> _getLocation() async {
+    try {
+      // Check permission
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+        if (permission == LocationPermission.denied) {
+          setState(() {
+            _locationText = "Location Permission Denied";
+            _isLoadingLocation = false;
+          });
+          return;
+        }
+      }
+
+      if (permission == LocationPermission.deniedForever) {
+        setState(() {
+          _locationText = "Location Permanently Denied";
+          _isLoadingLocation = false;
+        });
+        return;
+      }
+
+      // Get current position
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+      );
+
+      // Reverse geocode to get address
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+        position.latitude,
+        position.longitude,
+      );
+
+      if (placemarks.isNotEmpty) {
+        Placemark place = placemarks[0];
+        String city = place.locality ?? place.subAdministrativeArea ?? "Unknown";
+        String country = place.country ?? "";
+        setState(() {
+          _locationText = "$city, $country";
+          _isLoadingLocation = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _locationText = "Your Location";
+        _isLoadingLocation = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -116,21 +195,20 @@ class LiveMonitorScreen extends StatelessWidget {
     return StreamBuilder<DatabaseEvent>(
       stream: currentRef.onValue,
       builder: (context, snapshot) {
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-
-        // --- SIMULATION / DEFAULT DATA (if no firebase data) ---
-        int value = 0;
+        // Default values for simulation
+        int value = 45;
         int timestamp = DateTime.now().millisecondsSinceEpoch;
+        bool isConnected = false;
 
         if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-          final data = snapshot.data!.snapshot.value as Map;
-          value = data['value'] ?? 0;
-          timestamp = data['timestamp'] ?? timestamp;
-        } else {
-           // Fallback UI for empty state
-           value = 45; // Demo value
+          try {
+            final data = snapshot.data!.snapshot.value as Map;
+            value = (data['value'] as num?)?.toInt() ?? 45;
+            timestamp = (data['timestamp'] as num?)?.toInt() ?? timestamp;
+            isConnected = true;
+          } catch (e) {
+            // Keep default values
+          }
         }
 
         final reading = AqiReading(value: value, timestamp: timestamp);
@@ -140,53 +218,207 @@ class LiveMonitorScreen extends StatelessWidget {
 
         return AnimatedContainer(
           duration: const Duration(milliseconds: 500),
-          color: reading.statusColor,
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                reading.statusColor.withOpacity(0.3),
+                reading.statusColor.withOpacity(0.1),
+              ],
+            ),
+          ),
           child: SafeArea(
-            child: Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text(
-                    "Current AQI",
-                    style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.black54),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    width: 200,
-                    height: 200,
-                    decoration: BoxDecoration(
-                      shape: BoxShape.circle,
-                      color: Colors.white.withOpacity(0.3),
-                      border: Border.all(color: Colors.white, width: 4),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      "${reading.value}",
-                      style: GoogleFonts.inter(
-                        fontSize: 80,
-                        fontWeight: FontWeight.w900,
-                        color: Colors.black87,
+            child: SingleChildScrollView(
+              child: Padding(
+                padding: const EdgeInsets.all(24.0),
+                child: Column(
+                  children: [
+                    // Connection status badge
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: isConnected ? Colors.green.shade100 : Colors.amber.shade100,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            isConnected ? Icons.wifi : Icons.wifi_off,
+                            size: 14,
+                            color: isConnected ? Colors.green.shade700 : Colors.amber.shade700,
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            isConnected ? "Firebase Connected" : "Simulation Mode",
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: isConnected ? Colors.green.shade700 : Colors.amber.shade700,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                  Chip(
-                    backgroundColor: Colors.white.withOpacity(0.9),
-                    label: Text(
-                      reading.statusText.toUpperCase(),
-                      style: TextStyle(
-                        fontSize: 20, 
-                        fontWeight: FontWeight.bold,
-                        color: reading.statusColor.withOpacity(1.0).withRed(reading.statusColor.red ~/ 2) // Darker shade for text
+                    
+                    const SizedBox(height: 16),
+                    
+                    // Location
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.location_on, size: 18, color: Colors.black54),
+                        const SizedBox(width: 6),
+                        if (_isLoadingLocation)
+                          const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        else
+                          Text(
+                            _locationText.toUpperCase(),
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              letterSpacing: 1.2,
+                              color: Colors.black54,
+                            ),
+                          ),
+                      ],
+                    ),
+                    
+                    const SizedBox(height: 40),
+                    
+                    // Main AQI Card
+                    Container(
+                      width: double.infinity,
+                      constraints: const BoxConstraints(maxWidth: 320),
+                      padding: const EdgeInsets.all(32),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.9),
+                        borderRadius: BorderRadius.circular(40),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 30,
+                            offset: const Offset(0, 10),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              const Icon(Icons.air, size: 20, color: Colors.black45),
+                              const SizedBox(width: 8),
+                              Text(
+                                "AIR QUALITY INDEX",
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  letterSpacing: 2,
+                                  color: Colors.black45,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            "${reading.value}",
+                            style: GoogleFonts.inter(
+                              fontSize: 100,
+                              fontWeight: FontWeight.w900,
+                              color: reading.statusColor,
+                              height: 1,
+                            ),
+                          ),
+                          const SizedBox(height: 16),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: reading.statusColor,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              reading.statusText.toUpperCase(),
+                              style: GoogleFonts.inter(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.5,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 40),
-                  Text(
-                    "Last Updated: $dateStr",
-                    style: const TextStyle(fontSize: 14, color: Colors.black45),
-                  ),
-                ],
+                    
+                    const SizedBox(height: 24),
+                    
+                    // Last updated
+                    Text(
+                      "Last Updated: $dateStr",
+                      style: const TextStyle(fontSize: 13, color: Colors.black45),
+                    ),
+                    
+                    const SizedBox(height: 32),
+                    
+                    // Health tip card
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(20),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.05),
+                            blurRadius: 10,
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: reading.statusColor.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Icon(Icons.info_outline, color: reading.statusColor),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  "Health Recommendation",
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const SizedBox(height: 4),
+                                Text(
+                                  reading.healthTip,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    color: Colors.black54,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -206,64 +438,232 @@ class TrendsScreen extends StatelessWidget {
     final historyRef = database.child('aqi/history').limitToLast(20);
 
     return Scaffold(
-      appBar: AppBar(title: const Text("AQI Trends")),
+      backgroundColor: Colors.grey.shade50,
+      appBar: AppBar(
+        title: const Text("AQI Trends"),
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+      ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: StreamBuilder<DatabaseEvent>(
           stream: historyRef.onValue,
           builder: (context, snapshot) {
-            if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-              return const Center(child: Text("Waiting for history data..."));
-            }
+            List<FlSpot> spots = [];
+            int average = 0;
+            int peak = 0;
 
-            final data = snapshot.data!.snapshot.value as Map;
-            final List<FlSpot> spots = [];
-
-            // Sort by timestamp
-            final sortedKeys = data.keys.toList()..sort();
-            
-            for (var key in sortedKeys) {
-              // Assuming key is timestamp or stored inside
-              // Structure: history/timestamp: value OR history/id: {timestamp, value}
-              // Adapting to user req: "history/timestamp1: value"
-              final timestamp = int.tryParse(key.toString()) ?? 0;
-              final value = (data[key] as num).toDouble();
-              
-              if (timestamp > 0) {
-                 spots.add(FlSpot(timestamp.toDouble(), value));
+            if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
+              try {
+                final data = snapshot.data!.snapshot.value as Map;
+                final sortedKeys = data.keys.toList()..sort();
+                
+                int total = 0;
+                for (var key in sortedKeys) {
+                  final timestamp = int.tryParse(key.toString()) ?? 0;
+                  final value = (data[key] as num).toInt();
+                  
+                  if (timestamp > 0) {
+                    spots.add(FlSpot(spots.length.toDouble(), value.toDouble()));
+                    total += value;
+                    if (value > peak) peak = value;
+                  }
+                }
+                if (spots.isNotEmpty) {
+                  average = total ~/ spots.length;
+                }
+              } catch (e) {
+                // Handle error
               }
             }
 
-            if (spots.isEmpty) return const Center(child: Text("No valid data points"));
-
-            return LineChart(
-              LineChartData(
-                gridData: FlGridData(show: true),
-                titlesData: FlTitlesData(
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: false), // Too many timestamps to show text
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(showTitles: true, reservedSize: 40),
-                  ),
-                  topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  rightTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Stats row
+                Row(
+                  children: [
+                    Expanded(
+                      child: _StatCard(
+                        icon: Icons.trending_up,
+                        label: "Average",
+                        value: average.toString(),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _StatCard(
+                        icon: Icons.arrow_upward,
+                        label: "Peak",
+                        value: peak.toString(),
+                      ),
+                    ),
+                  ],
                 ),
-                borderData: FlBorderData(show: true),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: spots,
-                    isCurved: true,
-                    color: Colors.blue,
-                    barWidth: 3,
-                    dotData: FlDotData(show: false),
-                    belowBarData: BarAreaData(show: true, color: Colors.blue.withOpacity(0.1)),
+                
+                const SizedBox(height: 24),
+                
+                // Chart
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withOpacity(0.05),
+                          blurRadius: 10,
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          "Real-time Trend",
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 24),
+                        Expanded(
+                          child: spots.isEmpty
+                              ? const Center(
+                                  child: Text(
+                                    "Waiting for data...\nConnect Firebase to see trends.",
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(color: Colors.grey),
+                                  ),
+                                )
+                              : LineChart(
+                                  LineChartData(
+                                    gridData: FlGridData(
+                                      show: true,
+                                      drawVerticalLine: false,
+                                      getDrawingHorizontalLine: (value) {
+                                        return FlLine(
+                                          color: Colors.grey.shade200,
+                                          strokeWidth: 1,
+                                        );
+                                      },
+                                    ),
+                                    titlesData: FlTitlesData(
+                                      bottomTitles: AxisTitles(
+                                        sideTitles: SideTitles(showTitles: false),
+                                      ),
+                                      leftTitles: AxisTitles(
+                                        sideTitles: SideTitles(
+                                          showTitles: true,
+                                          reservedSize: 40,
+                                          getTitlesWidget: (value, meta) {
+                                            return Text(
+                                              value.toInt().toString(),
+                                              style: TextStyle(
+                                                color: Colors.grey.shade500,
+                                                fontSize: 12,
+                                              ),
+                                            );
+                                          },
+                                        ),
+                                      ),
+                                      topTitles: AxisTitles(
+                                        sideTitles: SideTitles(showTitles: false),
+                                      ),
+                                      rightTitles: AxisTitles(
+                                        sideTitles: SideTitles(showTitles: false),
+                                      ),
+                                    ),
+                                    borderData: FlBorderData(show: false),
+                                    lineBarsData: [
+                                      LineChartBarData(
+                                        spots: spots,
+                                        isCurved: true,
+                                        color: const Color(0xFF6366F1),
+                                        barWidth: 3,
+                                        dotData: FlDotData(show: false),
+                                        belowBarData: BarAreaData(
+                                          show: true,
+                                          gradient: LinearGradient(
+                                            begin: Alignment.topCenter,
+                                            end: Alignment.bottomCenter,
+                                            colors: [
+                                              const Color(0xFF6366F1).withOpacity(0.3),
+                                              const Color(0xFF6366F1).withOpacity(0.0),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                ),
+              ],
             );
           },
         ),
+      ),
+    );
+  }
+}
+
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+
+  const _StatCard({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 10,
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: Colors.grey),
+              const SizedBox(width: 6),
+              Text(
+                label.toUpperCase(),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1,
+                  color: Colors.grey,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            value,
+            style: const TextStyle(
+              fontSize: 28,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
       ),
     );
   }

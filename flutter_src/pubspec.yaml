@@ -1,5 +1,5 @@
 name: aqi_monitor
-description: IoT AQI Monitoring App
+description: IoT AQI Monitoring App with Firebase Real-time Database
 publish_to: 'none'
 version: 1.0.0+1
 
@@ -14,6 +14,8 @@ dependencies:
   fl_chart: ^0.66.0
   intl: ^0.18.1
   google_fonts: ^6.1.0
+  geolocator: ^11.0.0
+  geocoding: ^2.1.1
 
 dev_dependencies:
   flutter_test:
