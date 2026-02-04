@@ -11,10 +11,18 @@ import 'package:geocoding/geocoding.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // Initialize Firebase
-  // IMPORTANT: Run `flutterfire configure` to generate firebase_options.dart
+  // Initialize Firebase with explicit options for Android
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: const FirebaseOptions(
+        apiKey: "GOOGLE_API_KEY", // Will be replaced by flutterfire configure
+        appId: "1:1077540954400:android:b798d221ce05bbadc8b745", // Standard Android App ID pattern
+        messagingSenderId: "1077540954400",
+        projectId: "airguard-8852d",
+        databaseURL: "https://airguard-8852d-default-rtdb.firebaseio.com",
+        storageBucket: "airguard-8852d.firebasestorage.app",
+      ),
+    );
   } catch (e) {
     print("Firebase init error: $e");
   }
